@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^13.0.0",
+    "lucide-react": "^1.59.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -19,5 +21,8 @@
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "vite": "^8.3.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.13.6"
   }
 }
