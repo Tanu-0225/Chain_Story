@@ -19,6 +19,28 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
+function TurnTimer({ expiresAt }) {
+  const [now, setNow] = useState(0);
+  const deadline = expiresAt?.toMillis();
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const timeLeft = deadline && now ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
+  const hrs = timeLeft === null ? '--' : Math.floor(timeLeft / 3600).toString().padStart(2, '0');
+  const mins = timeLeft === null ? '--' : Math.floor((timeLeft % 3600) / 60).toString().padStart(2, '0');
+  const secs = timeLeft === null ? '--' : (timeLeft % 60).toString().padStart(2, '0');
+
+  return (
+    <div className="flex items-center space-x-2 text-[#5c4a3d] font-serif text-lg">
+      <Clock size={18} className="opacity-70" />
+      <span>{hrs}:{mins}:{secs}</span>
+    </div>
+  );
+}
+
 export default function ChainStory() {
   const [user, setUser] = useState(null);
   const [paragraphs, setParagraphs] = useState([]);
@@ -31,6 +53,9 @@ export default function ChainStory() {
   const [draftText, setDraftText] = useState('');
   const [isBouncing, setIsBouncing] = useState(false);
   const [bounceError, setBounceError] = useState('');
+  const [timerError, setTimerError] = useState({ queueId: '', message: '' });
+  const [timerRetry, setTimerRetry] = useState(0);
+  const timerRequestKey = useRef('');
 
   // --- AUTHENTICATION ---
   useEffect(() => {
@@ -92,9 +117,45 @@ export default function ChainStory() {
 
   const isMyTurn = activeQueueItem?.authorId === user?.uid;
   const isInQueue = queue.some(q => q.authorId === user?.uid && q.status === 'waiting');
-  
+
+  const activeQueueId = activeQueueItem?.id;
+  const activeAuthorId = activeQueueItem?.authorId;
+  const activeTimerStatus = activeQueueItem?.timerStatus;
+  const activeTimerExpiresAt = activeQueueItem?.timerExpiresAt;
   const wordCount = draftText.trim() ? draftText.trim().split(/\s+/).length : 0;
   const MAX_WORDS = 150;
+
+  useEffect(() => {
+    if (!user || !activeQueueId || activeAuthorId !== user.uid) return;
+    if (activeTimerStatus === 'scheduled' && activeTimerExpiresAt) return;
+
+    const requestKey = `${activeQueueId}:${timerRetry}`;
+    if (timerRequestKey.current === requestKey) return;
+    timerRequestKey.current = requestKey;
+
+    const scheduleTimer = async () => {
+      try {
+        const token = await user.getIdToken();
+        const response = await fetch('/api/start-timer', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ appId, queueId: activeQueueId })
+        });
+        if (!response.ok) {
+          throw new Error(`Timer request failed (${response.status})`);
+        }
+        setTimerError({ queueId: '', message: '' });
+      } catch (error) {
+        console.error('Failed to start turn timer:', error);
+        setTimerError({ queueId: activeQueueId, message: 'THE THREE-HOUR TIMER COULD NOT START.' });
+      }
+    };
+
+    scheduleTimer();
+  }, [user, activeQueueId, activeAuthorId, activeTimerStatus, activeTimerExpiresAt, timerRetry]);
 
   // --- ACTIONS ---
 
@@ -185,27 +246,6 @@ export default function ChainStory() {
     }
   };
 
-  // Simulated Timer Component
-  const SimulatedTimer = () => {
-    const [timeLeft, setTimeLeft] = useState(10800); // 3 hours in seconds
-
-    useEffect(() => {
-      const timer = setInterval(() => setTimeLeft(prev => prev > 0 ? prev - 1 : 0), 1000);
-      return () => clearInterval(timer);
-    }, []);
-
-    const hrs = Math.floor(timeLeft / 3600).toString().padStart(2, '0');
-    const mins = Math.floor((timeLeft % 3600) / 60).toString().padStart(2, '0');
-    const secs = (timeLeft % 60).toString().padStart(2, '0');
-
-    return (
-      <div className="flex items-center space-x-2 text-[#5c4a3d] font-serif text-lg">
-        <Clock size={18} className="opacity-70" />
-        <span>{hrs}:{mins}:{secs}</span>
-      </div>
-    );
-  };
-
   // --- RENDERERS ---
 
   if (!user) {
@@ -267,10 +307,10 @@ export default function ChainStory() {
               <h2 className="text-center italic text-[#7a6b5d] mb-10 text-xl">~ The Writers ~</h2>
               <div className="space-y-4">
                 {/* Past Writers */}
-                {queue.filter(q => q.status === 'done').map((q, i) => (
+                {queue.filter(q => q.status === 'done' || q.status === 'timed_out').map((q, i) => (
                   <div key={q.id} className="flex justify-between items-end border-b border-dotted border-[#d8caba] pb-1">
                     <span className="text-[#2c241b] text-lg">{q.authorName}</span>
-                    <span className="text-[#7a6b5d] text-sm italic">Penned</span>
+                    <span className="text-[#7a6b5d] text-sm italic">{q.status === 'done' ? 'Penned' : 'Time expired'}</span>
                   </div>
                 ))}
 
@@ -304,11 +344,25 @@ export default function ChainStory() {
             /* WRITER'S STUDIO */
             <div className="p-8 pt-16 sm:px-16">
               <div className="flex justify-between items-center mb-4 border-b border-[#d8caba] pb-2">
-                <SimulatedTimer />
+                <TurnTimer expiresAt={activeQueueItem.timerExpiresAt} />
                 <span className={`text-sm italic ${wordCount > MAX_WORDS ? 'text-[#8b2626]' : 'text-[#7a6b5d]'}`}>
                   {wordCount} / {MAX_WORDS} words
                 </span>
               </div>
+              {timerError.queueId === activeQueueItem.id && activeQueueItem.timerStatus !== 'scheduled' && (
+                <div className="mb-4 flex items-center justify-between text-sm text-[#8b2626]" role="alert">
+                  <span>{timerError.message}</span>
+                  <button
+                    onClick={() => {
+                      setTimerError({ queueId: '', message: '' });
+                      setTimerRetry((attempt) => attempt + 1);
+                    }}
+                    className="ml-3 underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
               
               <div className="relative mb-6">
                 <textarea 
