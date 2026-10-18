@@ -124,43 +124,22 @@ export default function ChainStory() {
   };
 
   const checkAIBouncer = async (text) => {
-    const apiKey = ""; // Canvas provides this
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-    
-    const prompt = `
-      You are the safety bouncer for a public collaborative storytelling game. Your ONLY job is to block severely unsafe content. 
-      ALLOW: General swearing, standard action/violence, dark themes, nonsense, off-topic spam.
-      BLOCK: Explicit sexual content (NSFW)/erotica, Hate speech/slurs, Extreme gratuitous gore.
-      Do not judge narrative quality. 
-      Text to analyze: "${text}"
-    `;
-
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "OBJECT",
-          properties: {
-            is_safe: { type: "BOOLEAN" },
-            flag_reason: { type: "STRING" }
-          },
-          required: ["is_safe", "flag_reason"]
-        }
-      }
-    };
-
-    const response = await fetch(apiUrl, {
+    const response = await fetch('/api/moderate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ text })
     });
 
-    const data = await response.json();
-    const resultText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!resultText) throw new Error("Invalid AI response");
-    
-    return JSON.parse(resultText);
+    if (!response.ok) {
+      throw new Error(`Moderation request failed (${response.status})`);
+    }
+
+    const result = await response.json();
+    if (typeof result.is_safe !== 'boolean' || typeof result.flag_reason !== 'string') {
+      throw new Error('Invalid moderation response');
+    }
+
+    return result;
   };
 
   const handleSubmitParagraph = async () => {
